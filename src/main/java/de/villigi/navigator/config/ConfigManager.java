@@ -5,24 +5,59 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import com.google.gson.stream.JsonReader;
 import de.villigi.navigator.Navigator;
+import de.villigi.navigator.handler.ItemBuilder;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.*;
+import java.util.HashMap;
+import java.util.UUID;
 
 public class ConfigManager {
 
     private final JavaPlugin plugin;
     private final File configFile;
-    private final Gson gson = new GsonBuilder().setPrettyPrinting().create(); // Pretty JSON output
+    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    public int itemAmount = 0;
+
+    public final HashMap<Integer, ItemStack> cachedItems = new HashMap<>();
+    public final HashMap<UUID, Inventory> playerMenues = new HashMap<>();
 
     public ConfigManager(JavaPlugin plugin) {
         this.plugin = plugin;
         this.configFile = new File(Navigator.getInstance().getDataFolder(), "Config.json");
     }
 
+    public void loadItems() {
+        for (int i = 0; i < 52; i++) {
+            if(!Navigator.getInstance().getConfigManager().getItemString("Item_" + i).isEmpty()){
+                String itemNumber = "Item_" + i;
+                JsonObject itemObject = JsonParser.parseString(Navigator.getInstance().getConfigManager().getItemString(itemNumber)).getAsJsonObject();
+                ItemStack item = new ItemBuilder(Material.getMaterial(itemObject.get("type").getAsString()))
+                        .setDisplayname(ChatColor.translateAlternateColorCodes('&', itemObject.get("title").getAsString()))
+                        .setCustomModelData(itemObject.get("modeldata").getAsInt())
+                        .build();
+                cachedItems.put(itemObject.get("slot").getAsInt(), item);
+                itemAmount = i+1;
+            }else{
+                break;
+            }
+        }
+    }
+
+    public Inventory getOrCreateMenu(Player p) {
+        return playerMenues.computeIfAbsent(p.getUniqueId(), id -> {
+            Inventory inv = Bukkit.createInventory(null, 6 * 9, ChatColor.translateAlternateColorCodes('&', Navigator.getInstance().getConfigManager().getString("Inventory_Title")));
+            cachedItems.forEach(inv::setItem);
+            return inv;
+        });
+    }
 
     public void createConfigFile() {
         if (!configFile.exists()) {
@@ -30,47 +65,38 @@ public class ConfigManager {
                 configFile.getParentFile().mkdirs();
                 JsonObject defaultConfig = new JsonObject();
                 defaultConfig.addProperty("Model_Data", 0);
-
                 defaultConfig.addProperty("Item_Navigator_Title", "&6Navigator");
                 defaultConfig.addProperty("Inventory_Title", "&6Navigator");
-                for (int i = 0; i<13; i++) {
-                    defaultConfig.addProperty("Item_" + i + "_type", String.valueOf(Material.PAPER));
-                    defaultConfig.addProperty("Item_" + i + "_title", "Titel");
-                    defaultConfig.addProperty("Item_" + i + "_command", "/help");
-                    defaultConfig.addProperty("Item_" + i + "_slot", i);
+
+                JsonObject itemsObject = new JsonObject();
+                for (int i = 0; i < 13; i++) {
+                    JsonObject itemObject = new JsonObject();
+                    itemObject.addProperty("slot", i);
+                    itemObject.addProperty("type", String.valueOf(Material.PAPER));
+                    itemObject.addProperty("title", "Titel");
+                    itemObject.addProperty("command", "/help");
+                    itemObject.addProperty("modeldata", 0);
+                    itemsObject.add("Item_" + i, itemObject);
                 }
+                defaultConfig.add("items", itemsObject);
+
                 try (FileWriter writer = new FileWriter(configFile)) {
                     gson.toJson(defaultConfig, writer);
                 }
 
-                Navigator.getInstance().getLogger().info("Config file created at " + configFile.getPath());
             } catch (IOException e) {
-                Navigator.getInstance().getLogger().severe("Could not create config file: " + e.getMessage());
             }
         } else {
-            Navigator.getInstance().getLogger().info("Config file already exists at " + configFile.getPath());
         }
     }
 
     public int getCustomModelData() {
-        if (!configFile.exists()) {
-            Navigator.getInstance().getLogger().warning("Config file does not exist. Returning default value.");
-            return 0;
-        }
-
-        try (FileReader reader = new FileReader(configFile);
-             JsonReader jsonReader = new JsonReader(reader)) {
-            JsonObject jsonObject = gson.fromJson(jsonReader, JsonObject.class);
-            return jsonObject != null && jsonObject.has("Model_Data") ? jsonObject.get("Model_Data").getAsInt() : 0;
-        } catch (IOException | JsonSyntaxException e) {
-            Navigator.getInstance().getLogger().severe("Could not read config file: " + e.getMessage());
-            return 0;
-        }
+        return getInt("Model_Data");
     }
 
     public String getString(String key) {
         if (!configFile.exists()) {
-            Navigator.getInstance().getLogger().warning("Config file does not exist. Returning default value.");
+
             return "";
         }
 
@@ -82,18 +108,39 @@ public class ConfigManager {
             if (jsonObject.has(key) && !jsonObject.get(key).isJsonNull()) {
                 return jsonObject.get(key).getAsString();
             } else {
-                Navigator.getInstance().getLogger().warning("Key '" + key + "' not found in config. Returning default value.");
+
                 return "";
             }
 
         } catch (IOException | JsonSyntaxException e) {
-            Navigator.getInstance().getLogger().severe("Could not read config file: " + e.getMessage());
             return "";
         }
     }
-    public int getInt(String key) {
+
+    public String getItemString(String itemNumber) {
         if (!configFile.exists()) {
-            Navigator.getInstance().getLogger().warning("Config file does not exist. Returning default value.");
+            return "";
+        }
+
+        try (FileReader reader = new FileReader(configFile);
+             BufferedReader bufferedReader = new BufferedReader(reader)) {
+
+            JsonObject jsonObject = JsonParser.parseReader(bufferedReader).getAsJsonObject();
+            JsonObject itemsObject = jsonObject.getAsJsonObject("items");
+
+            if (itemsObject != null && itemsObject.has(itemNumber)) {
+                JsonObject itemObject = itemsObject.getAsJsonObject(itemNumber);
+                return itemObject.toString();
+            }
+            return "";
+
+        } catch (IOException | JsonSyntaxException e) {
+            return "";
+        }
+    }
+
+    public int getInt(String itemNumber) {
+        if (!configFile.exists()) {
             return 0;
         }
 
@@ -101,19 +148,16 @@ public class ConfigManager {
              BufferedReader bufferedReader = new BufferedReader(reader)) {
 
             JsonObject jsonObject = JsonParser.parseReader(bufferedReader).getAsJsonObject();
+            JsonObject itemsObject = jsonObject.getAsJsonObject("items");
 
-            if (jsonObject.has(key) && !jsonObject.get(key).isJsonNull()) {
-                return jsonObject.get(key).getAsInt();
-            } else {
-                Navigator.getInstance().getLogger().warning("Key '" + key + "' not found in config. Returning default value.");
-                return 0;
+            if (itemsObject != null && itemsObject.has(itemNumber)) {
+                JsonObject itemObject = itemsObject.getAsJsonObject(itemNumber);
+                return itemObject.get("slot").getAsInt();
             }
+            return 0;
 
         } catch (IOException | JsonSyntaxException e) {
-            Navigator.getInstance().getLogger().severe("Could not read config file: " + e.getMessage());
             return 0;
         }
     }
-
-
 }

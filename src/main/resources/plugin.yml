@@ -1,3 +1,4 @@
 name: Navigator
 version: '1.0-SNAPSHOT'
+author: Villigi
 main: de.villigi.navigator.Navigator

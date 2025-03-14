@@ -17,6 +17,8 @@ public final class Navigator extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new Listener(), this);
 
+        configManager.loadItems();
+
     }
 
     @Override
